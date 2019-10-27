@@ -108,7 +108,8 @@ abstract class AlertingRestTestCase : ESRestTestCase() {
                 lastUpdateTime = Instant.now(),
                 chime = null,
                 slack = null,
-                customWebhook = null)
+                customWebhook = null,
+                mail = null)
     }
 
     protected fun createAlert(alert: Alert): Alert {
