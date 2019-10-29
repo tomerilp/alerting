@@ -69,13 +69,8 @@ public class DestinationMailClient {
                 mailmsg.setFrom(new InternetAddress(mailMessage.getFrom()));
                 mailmsg.setRecipients(Message.RecipientType.TO, InternetAddress.parse(mailMessage.getRecipients()));
                 mailmsg.setSubject(mailMessage.getSubject());
+                mailmsg.setText(message.getMessageContent());
 
-                MimeBodyPart mimeBodyPart = new MimeBodyPart();
-                mimeBodyPart.setContent(message.getMessageContent(), "text/html");
-                Multipart multipart = new MimeMultipart();
-                multipart.addBodyPart(mimeBodyPart);
-
-                mailmsg.setContent(multipart);
                 SendMessage(mailmsg);
             } catch (MessagingException e) {
                 return e.getMessage();
