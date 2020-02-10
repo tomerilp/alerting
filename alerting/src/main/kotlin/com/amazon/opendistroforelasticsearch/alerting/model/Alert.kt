@@ -18,6 +18,7 @@ package com.amazon.opendistroforelasticsearch.alerting.model
 import com.amazon.opendistroforelasticsearch.alerting.alerts.AlertError
 import com.amazon.opendistroforelasticsearch.alerting.elasticapi.instant
 import com.amazon.opendistroforelasticsearch.alerting.elasticapi.optionalTimeField
+import com.amazon.opendistroforelasticsearch.alerting.util.IndexUtils.Companion.NO_SCHEMA_VERSION
 import org.elasticsearch.common.lucene.uid.Versions
 import org.elasticsearch.common.xcontent.ToXContent
 import org.elasticsearch.common.xcontent.XContentBuilder
@@ -29,6 +30,7 @@ import java.time.Instant
 data class Alert(
     val id: String = NO_ID,
     val version: Long = NO_VERSION,
+    val schemaVersion: Int = NO_SCHEMA_VERSION,
     val monitorId: String,
     val monitorName: String,
     val monitorVersion: Long,
@@ -41,7 +43,8 @@ data class Alert(
     val acknowledgedTime: Instant? = null,
     val errorMessage: String? = null,
     val errorHistory: List<AlertError>,
-    val severity: String
+    val severity: String,
+    val actionExecutionResults: List<ActionExecutionResult>
 ) : ToXContent {
 
     init {
@@ -57,11 +60,13 @@ data class Alert(
         lastNotificationTime: Instant?,
         state: State = State.ACTIVE,
         errorMessage: String? = null,
-        errorHistory: List<AlertError> = mutableListOf()
+        errorHistory: List<AlertError> = mutableListOf(),
+        actionExecutionResults: List<ActionExecutionResult> = mutableListOf(),
+        schemaVersion: Int = NO_SCHEMA_VERSION
     ) : this(monitorId = monitor.id, monitorName = monitor.name, monitorVersion = monitor.version,
             triggerId = trigger.id, triggerName = trigger.name, state = state, startTime = startTime,
             lastNotificationTime = lastNotificationTime, errorMessage = errorMessage, errorHistory = errorHistory,
-            severity = trigger.severity)
+            severity = trigger.severity, actionExecutionResults = actionExecutionResults, schemaVersion = schemaVersion)
 
     enum class State {
         ACTIVE, ACKNOWLEDGED, COMPLETED, ERROR, DELETED
@@ -72,6 +77,7 @@ data class Alert(
     companion object {
 
         const val ALERT_ID_FIELD = "id"
+        const val SCHEMA_VERSION_FIELD = "schema_version"
         const val ALERT_VERSION_FIELD = "version"
         const val MONITOR_ID_FIELD = "monitor_id"
         const val MONITOR_VERSION_FIELD = "monitor_version"
@@ -86,23 +92,17 @@ data class Alert(
         const val ERROR_MESSAGE_FIELD = "error_message"
         const val ALERT_HISTORY_FIELD = "alert_history"
         const val SEVERITY_FIELD = "severity"
+        const val ACTION_EXECUTION_RESULTS_FIELD = "action_execution_results"
 
         const val NO_ID = ""
         const val NO_VERSION = Versions.NOT_FOUND
-
-        /**
-         * The mapping type of [Alert]s in the ES index.
-         *
-         * This should go away starting ES 7. We use "_doc" for future compatibility as described here:
-         * https://www.elastic.co/guide/en/elasticsearch/reference/6.x/removal-of-types.html#_schedule_for_removal_of_mapping_types
-         */
-        const val ALERT_TYPE = "_doc"
 
         @JvmStatic @JvmOverloads
         @Throws(IOException::class)
         fun parse(xcp: XContentParser, id: String = NO_ID, version: Long = NO_VERSION): Alert {
 
             lateinit var monitorId: String
+            var schemaVersion = NO_SCHEMA_VERSION
             lateinit var monitorName: String
             var monitorVersion: Long = Versions.NOT_FOUND
             lateinit var triggerId: String
@@ -115,6 +115,7 @@ data class Alert(
             var acknowledgedTime: Instant? = null
             var errorMessage: String? = null
             val errorHistory: MutableList<AlertError> = mutableListOf()
+            var actionExecutionResults: MutableList<ActionExecutionResult> = mutableListOf()
 
             ensureExpectedToken(XContentParser.Token.START_OBJECT, xcp.currentToken(), xcp::getTokenLocation)
             while (xcp.nextToken() != XContentParser.Token.END_OBJECT) {
@@ -123,6 +124,7 @@ data class Alert(
 
                 when (fieldName) {
                     MONITOR_ID_FIELD -> monitorId = xcp.text()
+                    SCHEMA_VERSION_FIELD -> schemaVersion = xcp.intValue()
                     MONITOR_NAME_FIELD -> monitorName = xcp.text()
                     MONITOR_VERSION_FIELD -> monitorVersion = xcp.longValue()
                     TRIGGER_ID_FIELD -> triggerId = xcp.text()
@@ -140,21 +142,29 @@ data class Alert(
                         }
                     }
                     SEVERITY_FIELD -> severity = xcp.text()
+                    ACTION_EXECUTION_RESULTS_FIELD -> {
+                        ensureExpectedToken(XContentParser.Token.START_ARRAY, xcp.currentToken(), xcp::getTokenLocation)
+                        while (xcp.nextToken() != XContentParser.Token.END_ARRAY) {
+                            actionExecutionResults.add(ActionExecutionResult.parse(xcp))
+                        }
+                    }
                 }
             }
 
-            return Alert(id = id, version = version, monitorId = requireNotNull(monitorId),
+            return Alert(id = id, version = version, schemaVersion = schemaVersion, monitorId = requireNotNull(monitorId),
                     monitorName = requireNotNull(monitorName), monitorVersion = monitorVersion,
                     triggerId = requireNotNull(triggerId), triggerName = requireNotNull(triggerName),
                     state = requireNotNull(state), startTime = requireNotNull(startTime), endTime = endTime,
                     lastNotificationTime = lastNotificationTime, acknowledgedTime = acknowledgedTime,
-                    errorMessage = errorMessage, errorHistory = errorHistory, severity = severity)
+                    errorMessage = errorMessage, errorHistory = errorHistory, severity = severity,
+                    actionExecutionResults = actionExecutionResults)
         }
     }
 
     override fun toXContent(builder: XContentBuilder, params: ToXContent.Params): XContentBuilder {
         return builder.startObject()
                 .field(MONITOR_ID_FIELD, monitorId)
+                .field(SCHEMA_VERSION_FIELD, schemaVersion)
                 .field(MONITOR_VERSION_FIELD, monitorVersion)
                 .field(MONITOR_NAME_FIELD, monitorName)
                 .field(TRIGGER_ID_FIELD, triggerId)
@@ -163,6 +173,7 @@ data class Alert(
                 .field(ERROR_MESSAGE_FIELD, errorMessage)
                 .field(ALERT_HISTORY_FIELD, errorHistory.toTypedArray())
                 .field(SEVERITY_FIELD, severity)
+                .field(ACTION_EXECUTION_RESULTS_FIELD, actionExecutionResults.toTypedArray())
                 .optionalTimeField(START_TIME_FIELD, startTime)
                 .optionalTimeField(LAST_NOTIFICATION_TIME_FIELD, lastNotificationTime)
                 .optionalTimeField(END_TIME_FIELD, endTime)

@@ -19,6 +19,11 @@ import com.amazon.opendistroforelasticsearch.alerting.core.model.ScheduledJob
 import com.amazon.opendistroforelasticsearch.alerting.MonitorRunner
 import com.amazon.opendistroforelasticsearch.alerting.model.Monitor
 import com.amazon.opendistroforelasticsearch.alerting.AlertingPlugin
+import com.amazon.opendistroforelasticsearch.alerting.elasticapi.ElasticThreadContextElement
+import org.apache.logging.log4j.LogManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.elasticsearch.action.get.GetRequest
 import org.elasticsearch.action.get.GetResponse
 import org.elasticsearch.client.node.NodeClient
@@ -39,11 +44,13 @@ import org.elasticsearch.rest.RestStatus
 import org.elasticsearch.rest.action.RestActionListener
 import java.time.Instant
 
+private val log = LogManager.getLogger(RestExecuteMonitorAction::class.java)
+
 class RestExecuteMonitorAction(
     val settings: Settings,
     restController: RestController,
     private val runner: MonitorRunner
-) : BaseRestHandler(settings) {
+) : BaseRestHandler() {
 
     init {
         restController.registerHandler(POST, "${AlertingPlugin.MONITOR_BASE_URI}/{monitorID}/_execute", this)
@@ -58,15 +65,19 @@ class RestExecuteMonitorAction(
             val requestEnd = request.paramAsTime("period_end", TimeValue(Instant.now().toEpochMilli()))
 
             val executeMonitor = fun(monitor: Monitor) {
-                runner.executor().submit {
+                // Launch the coroutine with the clients threadContext. This is needed to preserve authentication information
+                // stored on the threadContext set by the security plugin when using the Alerting plugin with the Security plugin.
+                runner.launch(ElasticThreadContextElement(client.threadPool().threadContext)) {
                     val (periodStart, periodEnd) =
                             monitor.schedule.getPeriodEndingAt(Instant.ofEpochMilli(requestEnd.millis))
                     try {
                         val response = runner.runMonitor(monitor, periodStart, periodEnd, dryrun)
-                        channel.sendResponse(BytesRestResponse(RestStatus.OK, channel.newBuilder().value(response)))
+                        withContext(Dispatchers.IO) {
+                            channel.sendResponse(BytesRestResponse(RestStatus.OK, channel.newBuilder().value(response)))
+                        }
                     } catch (e: Exception) {
-                        logger.error("Unexpected error running monitor", e)
-                        channel.sendResponse(BytesRestResponse(channel, e))
+                        log.error("Unexpected error running monitor", e)
+                        withContext(Dispatchers.IO) { channel.sendResponse(BytesRestResponse(channel, e)) }
                     }
                 }
             }

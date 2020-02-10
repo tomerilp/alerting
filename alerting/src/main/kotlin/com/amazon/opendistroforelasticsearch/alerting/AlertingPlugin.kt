@@ -14,11 +14,16 @@
  */
 package com.amazon.opendistroforelasticsearch.alerting
 
+import com.amazon.opendistroforelasticsearch.alerting.alerts.AlertIndices
 import com.amazon.opendistroforelasticsearch.alerting.core.JobSweeper
 import com.amazon.opendistroforelasticsearch.alerting.core.ScheduledJobIndices
 import com.amazon.opendistroforelasticsearch.alerting.core.action.node.ScheduledJobsStatsAction
 import com.amazon.opendistroforelasticsearch.alerting.core.action.node.ScheduledJobsStatsTransportAction
-import com.amazon.opendistroforelasticsearch.alerting.alerts.AlertIndices
+import com.amazon.opendistroforelasticsearch.alerting.core.model.ScheduledJob
+import com.amazon.opendistroforelasticsearch.alerting.core.model.SearchInput
+import com.amazon.opendistroforelasticsearch.alerting.core.resthandler.RestScheduledJobStatsHandler
+import com.amazon.opendistroforelasticsearch.alerting.core.schedule.JobScheduler
+import com.amazon.opendistroforelasticsearch.alerting.core.settings.ScheduledJobSettings
 import com.amazon.opendistroforelasticsearch.alerting.model.Monitor
 import com.amazon.opendistroforelasticsearch.alerting.resthandler.RestAcknowledgeAlertAction
 import com.amazon.opendistroforelasticsearch.alerting.resthandler.RestDeleteDestinationAction
@@ -30,11 +35,6 @@ import com.amazon.opendistroforelasticsearch.alerting.resthandler.RestIndexMonit
 import com.amazon.opendistroforelasticsearch.alerting.resthandler.RestSearchMonitorAction
 import com.amazon.opendistroforelasticsearch.alerting.script.TriggerScript
 import com.amazon.opendistroforelasticsearch.alerting.settings.AlertingSettings
-import com.amazon.opendistroforelasticsearch.alerting.core.model.ScheduledJob
-import com.amazon.opendistroforelasticsearch.alerting.core.model.SearchInput
-import com.amazon.opendistroforelasticsearch.alerting.core.resthandler.RestScheduledJobStatsHandler
-import com.amazon.opendistroforelasticsearch.alerting.core.schedule.JobScheduler
-import com.amazon.opendistroforelasticsearch.alerting.core.settings.ScheduledJobSettings
 import org.elasticsearch.action.ActionRequest
 import org.elasticsearch.action.ActionResponse
 import org.elasticsearch.client.Client
@@ -61,10 +61,10 @@ import org.elasticsearch.rest.RestController
 import org.elasticsearch.rest.RestHandler
 import org.elasticsearch.script.ScriptContext
 import org.elasticsearch.script.ScriptService
-import org.elasticsearch.threadpool.ExecutorBuilder
 import org.elasticsearch.threadpool.ThreadPool
 import org.elasticsearch.watcher.ResourceWatcherService
 import java.util.function.Supplier
+
 /**
  * Entry point of the OpenDistro for Elasticsearch alerting plugin
  * This class initializes the [RestGetMonitorAction], [RestDeleteMonitorAction], [RestIndexMonitorAction] rest handlers.
@@ -102,15 +102,15 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, P
         indexNameExpressionResolver: IndexNameExpressionResolver?,
         nodesInCluster: Supplier<DiscoveryNodes>
     ): List<RestHandler> {
-        return listOf(RestGetMonitorAction(settings, restController),
-                RestDeleteMonitorAction(settings, restController),
+        return listOf(RestGetMonitorAction(restController),
+                RestDeleteMonitorAction(restController),
                 RestIndexMonitorAction(settings, restController, scheduledJobIndices, clusterService),
-                RestSearchMonitorAction(settings, restController),
+                RestSearchMonitorAction(restController),
                 RestExecuteMonitorAction(settings, restController, runner),
-                RestAcknowledgeAlertAction(settings, restController),
-                RestScheduledJobStatsHandler(settings, restController, "_alerting"),
+                RestAcknowledgeAlertAction(restController),
+                RestScheduledJobStatsHandler(restController, "_alerting"),
                 RestIndexDestinationAction(settings, restController, scheduledJobIndices, clusterService),
-                RestDeleteDestinationAction(settings, restController))
+                RestDeleteDestinationAction(restController))
     }
 
     override fun getActions(): List<ActionPlugin.ActionHandler<out ActionRequest, out ActionResponse>> {
@@ -134,7 +134,7 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, P
     ): Collection<Any> {
         // Need to figure out how to use the Elasticsearch DI classes rather than handwiring things here.
         val settings = environment.settings()
-        alertIndices = AlertIndices(settings, client.admin().indices(), threadPool, clusterService)
+        alertIndices = AlertIndices(settings, client, threadPool, clusterService)
         runner = MonitorRunner(settings, client, threadPool, scriptService, xContentRegistry, alertIndices, clusterService)
         scheduledJobIndices = ScheduledJobIndices(client.admin(), clusterService)
         scheduler = JobScheduler(threadPool, runner)
@@ -159,11 +159,14 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, P
                 AlertingSettings.ALERT_BACKOFF_COUNT,
                 AlertingSettings.MOVE_ALERTS_BACKOFF_MILLIS,
                 AlertingSettings.MOVE_ALERTS_BACKOFF_COUNT,
+                AlertingSettings.ALERT_HISTORY_ENABLED,
                 AlertingSettings.ALERT_HISTORY_ROLLOVER_PERIOD,
                 AlertingSettings.ALERT_HISTORY_INDEX_MAX_AGE,
                 AlertingSettings.ALERT_HISTORY_MAX_DOCS,
+                AlertingSettings.ALERT_HISTORY_RETENTION_PERIOD,
                 AlertingSettings.ALERTING_MAX_MONITORS,
-                AlertingSettings.REQUEST_TIMEOUT)
+                AlertingSettings.REQUEST_TIMEOUT,
+                AlertingSettings.MAX_ACTION_THROTTLE_VALUE)
     }
 
     override fun onIndexModule(indexModule: IndexModule) {
@@ -174,9 +177,5 @@ internal class AlertingPlugin : PainlessExtension, ActionPlugin, ScriptPlugin, P
 
     override fun getContexts(): List<ScriptContext<*>> {
         return listOf(TriggerScript.CONTEXT)
-    }
-
-    override fun getExecutorBuilders(settings: Settings): List<ExecutorBuilder<*>> {
-        return listOf(MonitorRunner.executorBuilder(settings))
     }
 }

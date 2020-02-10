@@ -26,12 +26,10 @@ import org.elasticsearch.action.support.ActionFilters
 import org.elasticsearch.action.support.nodes.BaseNodeRequest
 import org.elasticsearch.action.support.nodes.TransportNodesAction
 import org.elasticsearch.cluster.health.ClusterIndexHealth
-import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver
 import org.elasticsearch.cluster.service.ClusterService
 import org.elasticsearch.common.inject.Inject
 import org.elasticsearch.common.io.stream.StreamInput
 import org.elasticsearch.common.io.stream.StreamOutput
-import org.elasticsearch.common.settings.Settings
 import org.elasticsearch.threadpool.ThreadPool
 import org.elasticsearch.transport.TransportService
 import java.io.IOException
@@ -47,25 +45,21 @@ class ScheduledJobsStatsTransportAction : TransportNodesAction<ScheduledJobsStat
 
     @Inject
     constructor(
-        settings: Settings,
         threadPool: ThreadPool,
         clusterService: ClusterService,
         transportService: TransportService,
         actionFilters: ActionFilters,
-        indexNameExpressionResolver: IndexNameExpressionResolver,
         jobSweeper: JobSweeper,
         jobScheduler: JobScheduler,
         scheduledJobIndices: ScheduledJobIndices
     ) : super(
-        settings,
         ScheduledJobsStatsAction.NAME,
         threadPool,
         clusterService,
         transportService,
         actionFilters,
-        indexNameExpressionResolver,
-        { ScheduledJobsStatsRequest() },
-        { ScheduledJobStatusRequest() },
+        { ScheduledJobsStatsRequest(it) },
+        { ScheduledJobStatusRequest(it) },
         ThreadPool.Names.MANAGEMENT,
         ScheduledJobStats::class.java
     ) {
@@ -74,12 +68,12 @@ class ScheduledJobsStatsTransportAction : TransportNodesAction<ScheduledJobsStat
         this.scheduledJobIndices = scheduledJobIndices
     }
 
-    override fun newNodeRequest(nodeId: String, request: ScheduledJobsStatsRequest): ScheduledJobStatusRequest {
-        return ScheduledJobStatusRequest(nodeId, request)
+    override fun newNodeRequest(request: ScheduledJobsStatsRequest): ScheduledJobStatusRequest {
+        return ScheduledJobStatusRequest(request)
     }
 
-    override fun newNodeResponse(): ScheduledJobStats {
-        return ScheduledJobStats()
+    override fun newNodeResponse(si: StreamInput): ScheduledJobStats {
+        return ScheduledJobStats(si)
     }
 
     override fun newResponse(
@@ -134,15 +128,13 @@ class ScheduledJobsStatsTransportAction : TransportNodesAction<ScheduledJobsStat
         lateinit var request: ScheduledJobsStatsRequest
 
         constructor() : super()
-        constructor(nodeId: String, request: ScheduledJobsStatsRequest) : super(nodeId) {
-            this.request = request
+
+        constructor(si: StreamInput): super(si) {
+            request = ScheduledJobsStatsRequest(si)
         }
 
-        @Throws(IOException::class)
-        override fun readFrom(si: StreamInput) {
-            super.readFrom(si)
-            request = ScheduledJobsStatsRequest()
-            request.readFrom(si)
+        constructor(request: ScheduledJobsStatsRequest) : super() {
+            this.request = request
         }
 
         @Throws(IOException::class)

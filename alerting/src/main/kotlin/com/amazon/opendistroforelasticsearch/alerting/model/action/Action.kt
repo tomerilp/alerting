@@ -15,6 +15,7 @@
 
 package com.amazon.opendistroforelasticsearch.alerting.model.action
 
+import org.elasticsearch.common.UUIDs
 import org.elasticsearch.common.xcontent.ToXContent
 import org.elasticsearch.common.xcontent.ToXContentObject
 import org.elasticsearch.common.xcontent.XContentBuilder
@@ -31,7 +32,10 @@ data class Action(
     val name: String,
     val destinationId: String,
     val subjectTemplate: Script?,
-    val messageTemplate: Script
+    val messageTemplate: Script,
+    val throttleEnabled: Boolean,
+    val throttle: Throttle?,
+    val id: String = UUIDs.base64UUID()
 ) : ToXContentObject {
 
     init {
@@ -42,12 +46,19 @@ data class Action(
     }
 
     override fun toXContent(builder: XContentBuilder, params: ToXContent.Params): XContentBuilder {
-        return builder.startObject()
+        val xContentBuilder = builder.startObject()
+                .field(ID_FIELD, id)
                 .field(NAME_FIELD, name)
                 .field(DESTINATION_ID_FIELD, destinationId)
-                .field(SUBJECT_TEMPLATE_FIELD, subjectTemplate)
                 .field(MESSAGE_TEMPLATE_FIELD, messageTemplate)
-                .endObject()
+                .field(THROTTLE_ENABLED_FIELD, throttleEnabled)
+        if (subjectTemplate != null) {
+            xContentBuilder.field(SUBJECT_TEMPLATE_FIELD, subjectTemplate)
+        }
+        if (throttle != null) {
+            xContentBuilder.field(THROTTLE_FIELD, throttle)
+        }
+        return xContentBuilder.endObject()
     }
 
     fun asTemplateArg(): Map<String, Any> {
@@ -55,10 +66,13 @@ data class Action(
     }
 
     companion object {
+        const val ID_FIELD = "id"
         const val NAME_FIELD = "name"
         const val DESTINATION_ID_FIELD = "destination_id"
         const val SUBJECT_TEMPLATE_FIELD = "subject_template"
         const val MESSAGE_TEMPLATE_FIELD = "message_template"
+        const val THROTTLE_ENABLED_FIELD = "throttle_enabled"
+        const val THROTTLE_FIELD = "throttle"
         const val MUSTACHE = "mustache"
         const val SUBJECT = "subject"
         const val MESSAGE = "message"
@@ -67,29 +81,51 @@ data class Action(
         @JvmStatic
         @Throws(IOException::class)
         fun parse(xcp: XContentParser): Action {
+            var id = UUIDs.base64UUID() // assign a default action id if one is not specified
             lateinit var name: String
             lateinit var destinationId: String
             var subjectTemplate: Script? = null // subject template could be null for some destinations
             lateinit var messageTemplate: Script
+            var throttleEnabled = false
+            var throttle: Throttle? = null
 
             XContentParserUtils.ensureExpectedToken(XContentParser.Token.START_OBJECT, xcp.currentToken(), xcp::getTokenLocation)
             while (xcp.nextToken() != XContentParser.Token.END_OBJECT) {
                 val fieldName = xcp.currentName()
                 xcp.nextToken()
                 when (fieldName) {
+                    ID_FIELD -> id = xcp.text()
                     NAME_FIELD -> name = xcp.textOrNull()
                     DESTINATION_ID_FIELD -> destinationId = xcp.textOrNull()
-                    SUBJECT_TEMPLATE_FIELD -> subjectTemplate = Script.parse(xcp, Script.DEFAULT_TEMPLATE_LANG)
+                    SUBJECT_TEMPLATE_FIELD -> {
+                        subjectTemplate = if (xcp.currentToken() == XContentParser.Token.VALUE_NULL) null else
+                            Script.parse(xcp, Script.DEFAULT_TEMPLATE_LANG)
+                    }
                     MESSAGE_TEMPLATE_FIELD -> messageTemplate = Script.parse(xcp, Script.DEFAULT_TEMPLATE_LANG)
+                    THROTTLE_FIELD -> {
+                        throttle = if (xcp.currentToken() == XContentParser.Token.VALUE_NULL) null else Throttle.parse(xcp)
+                    }
+                    THROTTLE_ENABLED_FIELD -> {
+                        throttleEnabled = xcp.booleanValue()
+                    }
+
                     else -> {
                         throw IllegalStateException("Unexpected field: $fieldName, while parsing action")
                     }
                 }
             }
-            return Action(requireNotNull(name) { "Destination name is null" },
+
+            if (throttleEnabled) {
+                requireNotNull(throttle, { "Action throttle enabled but not set throttle value" })
+            }
+
+            return Action(requireNotNull(name) { "Action name is null" },
                     requireNotNull(destinationId) { "Destination id is null" },
                     subjectTemplate,
-                    requireNotNull(messageTemplate) { "Destination message template is null" })
+                    requireNotNull(messageTemplate) { "Action message template is null" },
+                    throttleEnabled,
+                    throttle,
+                    id = requireNotNull(id))
         }
     }
 }

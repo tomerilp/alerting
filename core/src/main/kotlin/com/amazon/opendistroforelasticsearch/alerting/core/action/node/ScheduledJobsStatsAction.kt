@@ -15,20 +15,21 @@
 
 package com.amazon.opendistroforelasticsearch.alerting.core.action.node
 
-import org.elasticsearch.action.Action
-import org.elasticsearch.client.ElasticsearchClient
+import org.elasticsearch.action.ActionType
+import org.elasticsearch.common.io.stream.Writeable
 
-class ScheduledJobsStatsAction : Action<ScheduledJobsStatsRequest, ScheduledJobsStatsResponse, ScheduledJobsStatsRequestBuilder>(NAME) {
+class ScheduledJobsStatsAction : ActionType<ScheduledJobsStatsResponse>(NAME, reader) {
     companion object {
         val INSTANCE = ScheduledJobsStatsAction()
         const val NAME = "cluster:admin/opendistro/_scheduled_jobs/stats"
+
+        val reader = Writeable.Reader {
+            val response = ScheduledJobsStatsResponse(it)
+            response
+        }
     }
 
-    override fun newRequestBuilder(client: ElasticsearchClient): ScheduledJobsStatsRequestBuilder {
-        return ScheduledJobsStatsRequestBuilder(client, this)
-    }
-
-    override fun newResponse(): ScheduledJobsStatsResponse {
-        return ScheduledJobsStatsResponse()
+    override fun getResponseReader(): Writeable.Reader<ScheduledJobsStatsResponse> {
+        return reader
     }
 }

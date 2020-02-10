@@ -77,10 +77,12 @@ data class TriggerRunResult(
     val actionResults: MutableMap<String, ActionRunResult> = mutableMapOf()
 ) : ToXContent {
     override fun toXContent(builder: XContentBuilder, params: ToXContent.Params): XContentBuilder {
+        var msg = error?.message
+        if (error is ScriptException) msg = error.toJsonString()
         return builder.startObject()
                 .field("name", triggerName)
                 .field("triggered", triggered)
-                .field("error", error?.message)
+                .field("error", msg)
                 .field("action_results", actionResults as Map<String, ActionRunResult>)
                 .endObject()
     }
@@ -100,17 +102,21 @@ data class TriggerRunResult(
 }
 
 data class ActionRunResult(
+    val actionId: String,
     val actionName: String,
     val output: Map<String, String>,
     val throttled: Boolean = false,
+    val executionTime: Instant? = null,
     val error: Exception? = null
 ) : ToXContent {
 
     override fun toXContent(builder: XContentBuilder, params: ToXContent.Params): XContentBuilder {
         return builder.startObject()
+                .field("id", actionId)
                 .field("name", actionName)
                 .field("output", output)
                 .field("throttled", throttled)
+                .optionalTimeField("executionTime", executionTime)
                 .field("error", error?.message)
                 .endObject()
     }

@@ -16,7 +16,6 @@ package com.amazon.opendistroforelasticsearch.alerting.resthandler
 
 import com.amazon.opendistroforelasticsearch.alerting.core.model.ScheduledJob
 import com.amazon.opendistroforelasticsearch.alerting.core.model.ScheduledJob.Companion.SCHEDULED_JOBS_INDEX
-import com.amazon.opendistroforelasticsearch.alerting.core.model.ScheduledJob.Companion.SCHEDULED_JOB_TYPE
 import com.amazon.opendistroforelasticsearch.alerting.model.Monitor
 import com.amazon.opendistroforelasticsearch.alerting.util.context
 import com.amazon.opendistroforelasticsearch.alerting.AlertingPlugin
@@ -24,7 +23,6 @@ import org.elasticsearch.action.search.SearchRequest
 import org.elasticsearch.action.search.SearchResponse
 import org.elasticsearch.client.node.NodeClient
 import org.elasticsearch.common.bytes.BytesReference
-import org.elasticsearch.common.settings.Settings
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler
 import org.elasticsearch.common.xcontent.ToXContent.EMPTY_PARAMS
 import org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder
@@ -47,7 +45,7 @@ import java.io.IOException
 /**
  * Rest handlers to search for monitors.
  */
-class RestSearchMonitorAction(settings: Settings, controller: RestController) : BaseRestHandler(settings) {
+class RestSearchMonitorAction(controller: RestController) : BaseRestHandler() {
     init {
         // Search for monitors
         controller.registerHandler(POST, "${AlertingPlugin.MONITOR_BASE_URI}/_search", this)
@@ -67,10 +65,11 @@ class RestSearchMonitorAction(settings: Settings, controller: RestController) : 
         // searched.
         searchSourceBuilder.query(QueryBuilders.boolQuery().must(searchSourceBuilder.query())
                 .filter(QueryBuilders.termQuery(Monitor.MONITOR_TYPE + ".type", Monitor.MONITOR_TYPE)))
+                .seqNoAndPrimaryTerm(true)
+                .version(true)
         val searchRequest = SearchRequest()
                 .source(searchSourceBuilder)
                 .indices(SCHEDULED_JOBS_INDEX)
-                .types(SCHEDULED_JOB_TYPE)
         return RestChannelConsumer { channel -> client.search(searchRequest, searchMonitorResponse(channel)) }
     }
 

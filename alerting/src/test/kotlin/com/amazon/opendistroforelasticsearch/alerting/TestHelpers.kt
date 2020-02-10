@@ -23,18 +23,30 @@ import com.amazon.opendistroforelasticsearch.alerting.core.model.IntervalSchedul
 import com.amazon.opendistroforelasticsearch.alerting.core.model.Schedule
 import com.amazon.opendistroforelasticsearch.alerting.core.model.SearchInput
 import com.amazon.opendistroforelasticsearch.alerting.elasticapi.string
+import com.amazon.opendistroforelasticsearch.alerting.model.ActionExecutionResult
+import com.amazon.opendistroforelasticsearch.alerting.model.action.Throttle
 import org.apache.http.Header
 import org.apache.http.HttpEntity
+import org.elasticsearch.client.Request
+import org.elasticsearch.client.RequestOptions
 import org.elasticsearch.client.Response
 import org.elasticsearch.client.RestClient
 import org.elasticsearch.common.UUIDs
+import org.elasticsearch.common.settings.Settings
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler
+import org.elasticsearch.common.xcontent.NamedXContentRegistry
+import org.elasticsearch.common.xcontent.XContentBuilder
 import org.elasticsearch.common.xcontent.XContentFactory
+import org.elasticsearch.common.xcontent.XContentParser
+import org.elasticsearch.common.xcontent.XContentType
 import org.elasticsearch.index.query.QueryBuilders
 import org.elasticsearch.script.Script
 import org.elasticsearch.script.ScriptType
+import org.elasticsearch.search.SearchModule
 import org.elasticsearch.search.builder.SearchSourceBuilder
 import org.elasticsearch.test.ESTestCase
 import org.elasticsearch.test.ESTestCase.randomInt
+import org.elasticsearch.test.ESTestCase.randomIntBetween
 import org.elasticsearch.test.rest.ESRestTestCase
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -86,13 +98,28 @@ fun randomTemplateScript(
 fun randomAction(
     name: String = ESRestTestCase.randomUnicodeOfLength(10),
     template: Script = randomTemplateScript("Hello World"),
-    destinationId: String = "123"
-) = Action(name, destinationId, template, template)
+    destinationId: String = "123",
+    throttleEnabled: Boolean = false,
+    throttle: Throttle = randomThrottle()
+) = Action(name, destinationId, template, template, throttleEnabled, throttle)
+
+fun randomThrottle(
+    value: Int = randomIntBetween(60, 120),
+    unit: ChronoUnit = ChronoUnit.MINUTES
+) = Throttle(value, unit)
 
 fun randomAlert(monitor: Monitor = randomMonitor()): Alert {
     val trigger = randomTrigger()
-    return Alert(monitor, trigger, Instant.now().truncatedTo(ChronoUnit.MILLIS), null)
+    val actionExecutionResults = mutableListOf(randomActionExecutionResult(), randomActionExecutionResult())
+    return Alert(monitor, trigger, Instant.now().truncatedTo(ChronoUnit.MILLIS), null,
+            actionExecutionResults = actionExecutionResults)
 }
+
+fun randomActionExecutionResult(
+    actionId: String = UUIDs.base64UUID(),
+    lastExecutionTime: Instant = Instant.now().truncatedTo(ChronoUnit.MILLIS),
+    throttledCount: Int = randomInt()
+) = ActionExecutionResult(actionId, lastExecutionTime, throttledCount)
 
 fun Monitor.toJsonString(): String {
     val builder = XContentFactory.jsonBuilder()
@@ -112,11 +139,15 @@ fun RestClient.makeRequest(
     entity: HttpEntity? = null,
     vararg headers: Header
 ): Response {
-    return if (entity != null) {
-        performRequest(method, endpoint, params, entity, *headers)
-    } else {
-        performRequest(method, endpoint, params, *headers)
+    val request = Request(method, endpoint)
+    val options = RequestOptions.DEFAULT.toBuilder()
+    headers.forEach { options.addHeader(it.name, it.value) }
+    request.options = options.build()
+    params.forEach { request.addParameter(it.key, it.value) }
+    if (entity != null) {
+        request.entity = entity
     }
+    return performRequest(request)
 }
 
 /**
@@ -131,9 +162,28 @@ fun RestClient.makeRequest(
     entity: HttpEntity? = null,
     vararg headers: Header
 ): Response {
-    return if (entity != null) {
-        performRequest(method, endpoint, emptyMap(), entity, *headers)
-    } else {
-        performRequest(method, endpoint, emptyMap(), *headers)
+    val request = Request(method, endpoint)
+    val options = RequestOptions.DEFAULT.toBuilder()
+    headers.forEach { options.addHeader(it.name, it.value) }
+    request.options = options.build()
+    if (entity != null) {
+        request.entity = entity
     }
+    return performRequest(request)
+}
+
+fun builder(): XContentBuilder {
+    return XContentBuilder.builder(XContentType.JSON.xContent())
+}
+
+fun parser(xc: String): XContentParser {
+    val parser = XContentType.JSON.xContent().createParser(xContentRegistry(), LoggingDeprecationHandler.INSTANCE, xc)
+    parser.nextToken()
+    return parser
+}
+
+fun xContentRegistry(): NamedXContentRegistry {
+    return NamedXContentRegistry(listOf(
+            SearchInput.XCONTENT_REGISTRY) +
+            SearchModule(Settings.EMPTY, false, emptyList()).namedXContents)
 }
